@@ -346,7 +346,7 @@ class PmapMaker(object):
         self.rupdata = RupData(cmaker)
         imtls = cmaker.imtls
         L, G = len(imtls.array), len(self.gsims)
-        self.pmap = AccumDict(accum=ProbabilityMap(L, G))
+        self.pmap = AccumDict(accum=ProbabilityMap(L, G))  # grp_id -> pmap
         # AccumDict of arrays with 3 elements nrups, nsites, calc_time
         self.calc_times = AccumDict(accum=numpy.zeros(3, numpy.float32))
         self.totrups = 0
@@ -388,12 +388,10 @@ class PmapMaker(object):
                     pnes = rup.get_probability_no_exceedance(poes)
                     if self.rup_indep:
                         for sid, pne in zip(sids, pnes):
-                            p.setdefault(
-                                sid, self.rup_indep).array *= pne
+                            p.setdefault(sid, self.rup_indep).array *= pne
                     else:
                         for sid, pne in zip(sids, pnes):
-                            p.setdefault(
-                                sid, self.rup_indep).array += (
+                            p.setdefault(sid, self.rup_indep).array += (
                                 1.-pne) * rup.weight
                 p.numsites += len(sids)
         return p
@@ -412,8 +410,8 @@ class PmapMaker(object):
         :param sites: the sites affected by it
         """
         t0 = time.time()
-        numrups, numsites = 0, 0
         for srcs, sites in self.srcfilter.get_sources_sites(self.group):
+            numrups, numsites = 0, 0
             for src in srcs:
                 with self.cmaker.mon('iter_ruptures', measuremem=False):
                     self.mag_rups = [
@@ -436,8 +434,8 @@ class PmapMaker(object):
                 [numrups, numsites, time.time() - t0])
 
     def _make_mutex(self):
-        t0 = time.time()
         for src, sites in self.srcfilter(self.group):
+            t0 = time.time()
             rups_sites = []
             for rup in src.iter_ruptures(shift_hypo=self.shift_hypo):
                 try:
