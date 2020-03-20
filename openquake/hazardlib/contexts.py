@@ -307,22 +307,20 @@ class ContextMaker(object):
 
     def get_pmap_by_grp(self, srcfilter, group):
         """
-        :return: dictionaries pmap, rdata, calc_times
+        :return: dictionaries pmap, rdata, calc_times, extra
         """
         # AccumDict of arrays with 3 elements nrups, nsites, calc_time
         calc_times = AccumDict(accum=numpy.zeros(3, numpy.float32))
         pmaker = PmapMaker(self, srcfilter, group)
-        totrups = 0
         srcs_sites = srcfilter.get_sources_sites(group)
         while True:
             try:
                 srcs, sites = next(srcs_sites)
-                totrups += pmaker.make(srcs, sites, calc_times)
+                pmaker.make(srcs, sites, calc_times)
             except StopIteration:
                 break
         rdata = {k: numpy.array(v) for k, v in pmaker.rupdata.data.items()}
-        extra = dict(totrups=totrups)
-        return pmaker.pmap, rdata, calc_times, extra
+        return pmaker.pmap, rdata, calc_times, dict(totrups=pmaker.totrups)
 
 
 def _collapse(rups):
@@ -366,6 +364,7 @@ class PmapMaker(object):
         imtls = cmaker.imtls
         L, G = len(imtls.array), len(self.gsims)
         self.pmap = AccumDict(accum=ProbabilityMap(L, G))
+        self.totrups = 0
 
     def _sids_poes(self, rup, r_sites, dctx):
         # return sids and poes of shape (N, L, G)
@@ -397,19 +396,28 @@ class PmapMaker(object):
             else:
                 self.pmap[grp_id] |= pm
 
-    def make_mutex(self):
+    def make_mutex(self, calc_times):
+        t0 = time.time()
         for src, sites in self.srcfilter(self.group):
-            rups = []
+            rups_sites = []
             for rup in src.iter_ruptures(shift_hypo=self.shift_hypo):
                 try:
                     sctx, dctx = self.make_contexts(sites, rup)
                 except FarAwayRupture:
                     continue
                 rup.grp_ids = src.grp_ids
-                rups.append(rup)
-                poemap = self.build_poemap(self._gen_rups_sites(src, sites))
-                self._update(pmap, poemap, src)
-        return totrups
+                rups_sites.append((rup, sctx))
+            pm = self.build_poemap(rups_sites)
+            calc_times[src.source_id] += numpy.array(
+                [pm.numrups, pm.numsites, time.time() - t0])
+            self.totrups += pm.totrups
+            if self.rup_indep:
+                pm = ~pm
+            if not pm:
+                continue
+            pm *= src.mutex_weight
+            for grp_id in src.grp_ids:
+                self.pmap[grp_id] += pm
 
     def build_poemap(self, rups_sites):
         L, G = len(self.imtls.array), len(self.gsims)
@@ -446,10 +454,9 @@ class PmapMaker(object):
         :param src: a list of hazardlib sources with the same source_id
         :param sites: the sites affected by it
         :param calc_times: a dictionary src.id -> array
-        :returns: the total number of ruptures within the maximum distance
         """
         t0 = time.time()
-        numrups, numsites, totrups = 0, 0, 0
+        numrups, numsites = 0, 0
         for src in srcs:
             with self.cmaker.mon('iter_ruptures', measuremem=False):
                 self.mag_rups = [
@@ -457,11 +464,13 @@ class PmapMaker(object):
                     for mag, rups in itertools.groupby(
                             src.iter_ruptures(shift_hypo=self.shift_hypo),
                             key=operator.attrgetter('mag'))]
-            poemap = self.build_poemap(self._gen_rups_sites(src, sites))
-            self._update(poemap, src)
+            p = self.build_poemap(self._gen_rups_sites(src, sites))
+            numrups += p.numrups
+            numsites += p.numsites
+            self.totrups += p.totrups
+            self._update(p, src)
         calc_times[src.source_id] += numpy.array(
             [numrups, numsites, time.time() - t0])
-        return totrups
 
     def collapse(self, ctxs, precision=1E-3):
         """
