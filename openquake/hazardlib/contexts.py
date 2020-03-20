@@ -305,23 +305,6 @@ class ContextMaker(object):
                 gmv[m, d] = numpy.exp(max(means))
         return gmv
 
-    def get_pmap_by_grp(self, srcfilter, group):
-        """
-        :return: dictionaries pmap, rdata, calc_times, extra
-        """
-        # AccumDict of arrays with 3 elements nrups, nsites, calc_time
-        calc_times = AccumDict(accum=numpy.zeros(3, numpy.float32))
-        pmaker = PmapMaker(self, srcfilter, group)
-        srcs_sites = srcfilter.get_sources_sites(group)
-        while True:
-            try:
-                srcs, sites = next(srcs_sites)
-                pmaker.make(srcs, sites, calc_times)
-            except StopIteration:
-                break
-        rdata = {k: numpy.array(v) for k, v in pmaker.rupdata.data.items()}
-        return pmaker.pmap, rdata, calc_times, dict(totrups=pmaker.totrups)
-
 
 def _collapse(rups):
     # collapse a list of ruptures into a single rupture
@@ -364,6 +347,8 @@ class PmapMaker(object):
         imtls = cmaker.imtls
         L, G = len(imtls.array), len(self.gsims)
         self.pmap = AccumDict(accum=ProbabilityMap(L, G))
+        # AccumDict of arrays with 3 elements nrups, nsites, calc_time
+        self.calc_times = AccumDict(accum=numpy.zeros(3, numpy.float32))
         self.totrups = 0
 
     def _sids_poes(self, rup, r_sites, dctx):
@@ -382,42 +367,6 @@ class PmapMaker(object):
                         # when 0 ignore the gsim: see _build_trts_branches
                         poes[:, ll(imt), g] = 0
             return r_sites.sids, poes
-
-    def _update(self, pm, src):
-        if self.rup_indep:
-            pm = ~pm
-        if not pm:
-            return
-        if self.src_mutex:
-            pm *= src.mutex_weight
-        for grp_id in src.grp_ids:
-            if self.src_mutex:
-                self.pmap[grp_id] += pm
-            else:
-                self.pmap[grp_id] |= pm
-
-    def make_mutex(self, calc_times):
-        t0 = time.time()
-        for src, sites in self.srcfilter(self.group):
-            rups_sites = []
-            for rup in src.iter_ruptures(shift_hypo=self.shift_hypo):
-                try:
-                    sctx, dctx = self.make_contexts(sites, rup)
-                except FarAwayRupture:
-                    continue
-                rup.grp_ids = src.grp_ids
-                rups_sites.append((rup, sctx))
-            pm = self.build_poemap(rups_sites)
-            calc_times[src.source_id] += numpy.array(
-                [pm.numrups, pm.numsites, time.time() - t0])
-            self.totrups += pm.totrups
-            if self.rup_indep:
-                pm = ~pm
-            if not pm:
-                continue
-            pm *= src.mutex_weight
-            for grp_id in src.grp_ids:
-                self.pmap[grp_id] += pm
 
     def build_poemap(self, rups_sites):
         L, G = len(self.imtls.array), len(self.gsims)
@@ -449,28 +398,65 @@ class PmapMaker(object):
                 p.numsites += len(sids)
         return p
 
-    def make(self, srcs, sites, calc_times):
+    def make(self):
+        if self.src_mutex:
+            self._make_mutex()
+        else:
+            self._make()
+        rdata = {k: numpy.array(v) for k, v in self.rupdata.data.items()}
+        return self.pmap, rdata, self.calc_times,  dict(totrups=self.totrups)
+
+    def _make(self):
         """
         :param src: a list of hazardlib sources with the same source_id
         :param sites: the sites affected by it
-        :param calc_times: a dictionary src.id -> array
         """
         t0 = time.time()
         numrups, numsites = 0, 0
-        for src in srcs:
-            with self.cmaker.mon('iter_ruptures', measuremem=False):
-                self.mag_rups = [
-                    (mag, _add(rups, src.grp_ids))
-                    for mag, rups in itertools.groupby(
-                            src.iter_ruptures(shift_hypo=self.shift_hypo),
-                            key=operator.attrgetter('mag'))]
-            p = self.build_poemap(self._gen_rups_sites(src, sites))
-            numrups += p.numrups
-            numsites += p.numsites
-            self.totrups += p.totrups
-            self._update(p, src)
-        calc_times[src.source_id] += numpy.array(
-            [numrups, numsites, time.time() - t0])
+        for srcs, sites in self.srcfilter.get_sources_sites(self.group):
+            for src in srcs:
+                with self.cmaker.mon('iter_ruptures', measuremem=False):
+                    self.mag_rups = [
+                        (mag, _add(rups, src.grp_ids))
+                        for mag, rups in itertools.groupby(
+                                src.iter_ruptures(shift_hypo=self.shift_hypo),
+                                key=operator.attrgetter('mag'))]
+                p = self.build_poemap(self._gen_rups_sites(src, sites))
+                numrups += p.numrups
+                numsites += p.numsites
+                self.totrups += p.totrups
+                if self.rup_indep:
+                    p = ~p
+                if not p:
+                    continue
+                for grp_id in src.grp_ids:
+                    self.pmap[grp_id] |= p
+
+            self.calc_times[src.source_id] += numpy.array(
+                [numrups, numsites, time.time() - t0])
+
+    def _make_mutex(self):
+        t0 = time.time()
+        for src, sites in self.srcfilter(self.group):
+            rups_sites = []
+            for rup in src.iter_ruptures(shift_hypo=self.shift_hypo):
+                try:
+                    sctx, dctx = self.cmaker.make_contexts(sites, rup)
+                except FarAwayRupture:
+                    continue
+                rup.grp_ids = src.grp_ids
+                rups_sites.append(([rup], sctx))
+            pm = self.build_poemap(rups_sites)
+            self.calc_times[src.source_id] += numpy.array(
+                [pm.numrups, pm.numsites, time.time() - t0])
+            self.totrups += pm.totrups
+            if self.rup_indep:
+                pm = ~pm
+            if not pm:
+                continue
+            pm *= src.mutex_weight
+            for grp_id in src.grp_ids:
+                self.pmap[grp_id] += pm
 
     def collapse(self, ctxs, precision=1E-3):
         """
