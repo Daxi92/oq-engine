@@ -40,6 +40,25 @@ KNOWN_DISTANCES = frozenset(
     'rrup rx ry0 rjb rhypo repi rcdpp azimuth azimuth_cp rvolc'.split())
 
 
+def digitize(values, name=None, minval=None, maxval=None):
+    """
+    :param values: an array of n floats (or arrays)
+    :returns: an array of n numpy.uint8 values
+    """
+    if name is None:
+        if minval is None:
+            minval = values.min()
+        if maxval is None:
+            maxval = values.max()
+        if minval == maxval:
+            bins = [minval] * 255
+        else:
+            bins = numpy.arange(minval, maxval, (maxval-minval) / 255)
+        return numpy.searchsorted(bins, values)
+    arr = numpy.array([getattr(obj, name) for obj in values])
+    return digitize(arr)
+
+
 def get_distances(rupture, sites, param):
     """
     :param rupture: a rupture
@@ -228,7 +247,7 @@ class ContextMaker(object):
                                  (type(self).__name__, param))
             setattr(rupture, param, value)
 
-    def make_contexts(self, sites, rupture):
+    def make_contexts(self, sites, rupture, filter=True):
         """
         Filter the site collection with respect to the rupture and
         create context objects.
@@ -247,7 +266,16 @@ class ContextMaker(object):
             If any of declared required parameters (site, rupture and
             distance parameters) is unknown.
         """
-        sites, dctx = self.filter(sites, rupture)
+        if filter:
+            sites, dctx = self.filter(sites, rupture)
+        else:
+            distances = get_distances(rupture, sites, self.filter_distance)
+            mdist = self.maximum_distance(
+                rupture.tectonic_region_type, rupture.mag)
+            if (distances > mdist).all():
+                raise FarAwayRupture(
+                    '%d: %d km' % (rupture.rup_id, distances.min()))
+            dctx = DistancesContext([(self.filter_distance, distances)])
         for param in self.REQUIRES_DISTANCES - set([self.filter_distance]):
             distances = get_distances(rupture, sites, param)
             setattr(dctx, param, distances)
@@ -264,15 +292,15 @@ class ContextMaker(object):
 
     def make_ctxs(self, ruptures, sites):
         """
-        :returns: a list of triples (rctx, sctx, dctx)
+        :returns: a list of pairs (rctx, dctx)
         """
         ctxs = []
         for rup in ruptures:
             try:
-                sctx, dctx = self.make_contexts(sites, rup)
+                sctx, dctx = self.make_contexts(sites, rup, filter=False)
             except FarAwayRupture:
                 continue
-            ctxs.append((rup, sctx, dctx))
+            ctxs.append((rup, dctx))
         return ctxs
 
     def max_intensity(self, onesite, mags, dists):
@@ -315,10 +343,10 @@ def _collapse(rups):
 
 
 def _collapse_ctxs(ctxs):
-    rup, sites, dctx = ctxs[0]
+    rup, dctx = ctxs[0]
     rups = [ctx[0] for ctx in ctxs]
     [rup] = _collapse(rups)
-    return [(rup, sites, dctx)]
+    return [(rup, dctx)]
 
 
 class PmapMaker(object):
@@ -364,9 +392,14 @@ class PmapMaker(object):
                 ctxs = self.cmaker.make_ctxs(rups, sites)
                 if ctxs:
                     d['totrups'] += len(ctxs)
-                    ctxs = self.collapse(ctxs)
+                    ctxs = self.collapse(ctxs, sites)
                     d['numrups'] += len(ctxs)
-            for rup, r_sites, dctx in ctxs:
+            for rup, dctx in ctxs:
+                mask = (dctx.rrup <= self.maximum_distance(
+                    rup.tectonic_region_type, rup.mag))
+                r_sites = sites.filter(mask)
+                for name in self.REQUIRES_DISTANCES:
+                    setattr(dctx, name, getattr(dctx, name)[mask])
                 if self.fewsites:  # store rupdata
                     self.rupdata.add(rup, r_sites, dctx)
                     self.rupdata.data['grp_id_'].append(grp_ids)
@@ -441,29 +474,33 @@ class PmapMaker(object):
         rdata = {k: numpy.array(v) for k, v in self.rupdata.data.items()}
         return pmap, rdata, self.calc_times,  dict(totrups=self.totrups)
 
-    def collapse(self, ctxs, precision=1E-3):
+    def collapse(self, ctxs, sites):
         """
-        Collapse the contexts if the distances are equivalent up to 1/1000
+        Collapse the contexts with similar parameters
         """
-        if not self.rup_indep or len(ctxs) == 1:  # do not collapse
+        C = len(ctxs)
+        if not self.rup_indep or C == 1:  # do not collapse
             return ctxs
+        rctxs = []
+        dctxs = []
+        for rctx, dctx in ctxs:
+            rctxs.append(rctx)
+            dctxs.append(dctx)
+        P = (len(self.REQUIRES_RUPTURE_PARAMETERS) +
+             len(self.REQUIRES_DISTANCES) * len(sites))
+        idxs = numpy.zeros((C, P), numpy.uint8)
+        p = 0
+        for par in self.REQUIRES_RUPTURE_PARAMETERS:
+            idxs[:, p] = digitize(rctxs, par)
+            p += 1
+        for name in self.REQUIRES_DISTANCES:
+            arr = digitize(dctxs, name)  # shape (C, nsites)
+            for s in range(len(sites)):
+                idxs[:, p] = arr[:, s]
+                p += 1
         acc = AccumDict(accum=[])
-        distmax = max(dctx.rrup.max() for rup, sctx, dctx in ctxs)
-        for rup, sctx, dctx in ctxs:
-            pdist = self.pointsource_distance.get('%.2f' % rup.mag)
-            tup = []
-            for p in self.REQUIRES_RUPTURE_PARAMETERS:
-                if p != 'mag' and pdist and dctx.rrup.min() > pdist:
-                    tup.append(0)
-                    # all nonmag rupture parameters are collapsed to 0
-                    # over the pointsource_distance
-                else:
-                    tup.append(getattr(rup, p))
-            for name in self.REQUIRES_DISTANCES:
-                dists = getattr(dctx, name)
-                tup.extend(I16(dists / distmax / precision))
-                # NB: the rx distance can be negative, hence the I16 (not U16)
-            acc[tuple(tup)].append((rup, sctx, dctx))
+        for ctx, idx in zip(ctxs, idxs):
+            acc[tuple(idx)].append(ctx)
         new_ctxs = []
         for ctxs in acc.values():
             new_ctxs.extend(_collapse_ctxs(ctxs) if len(ctxs) > 1 else ctxs)
