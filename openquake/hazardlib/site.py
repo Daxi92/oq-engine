@@ -352,7 +352,7 @@ class SiteCollection(object):
     @property
     def mesh(self):
         """Return a mesh with the given lons, lats, and depths"""
-        return Mesh(self.lons, self.lats, self.depths)
+        return Mesh(self['lon'], self['lat'], self['depth'])
 
     def at_sea_level(self):
         """True if all depths are zero"""
@@ -387,9 +387,12 @@ class SiteCollection(object):
         one at a time.
         """
         params = self.array.dtype.names[4:]  # except sids, lons, lats, depths
+        sids = self.sids
         for i, location in enumerate(self.mesh):
             kw = {p: self.array[i][p] for p in params}
-            yield Site(location, **kw)
+            s = Site(location, **kw)
+            s.id = sids[i]
+            yield s
 
     def filter(self, mask):
         """
