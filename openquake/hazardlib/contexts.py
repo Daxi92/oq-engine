@@ -367,7 +367,7 @@ class PmapMaker(object):
                 if len(sites) == 1 and self.pointsource_distance != {}:
                     rups = self.collapse_point_ruptures(rups, sites)
             ctxs = self.cmaker.make_ctxs(rups, sites, grp_ids, filt=False)
-            if self.rup_indep and rup_parametric and self.collapse_ruptures:
+            if self.rup_indep and rup_parametric:
                 ctxs = self.collapse_ctxs(ctxs)
             self.numrups += len(ctxs)
             for rup, dctx in ctxs:
@@ -500,7 +500,7 @@ class PmapMaker(object):
             for rup in mrups:  # called on a single site
                 rup.dist = get_distances(rup, sites, 'rrup').min()
                 coll.append(rup)
-            for rs in groupby_bin(coll, 10, operator.attrgetter('dist')):
+            for rs in groupby_bin(coll, 100, operator.attrgetter('dist')):
                 # group together ruptures in the same distance bin
                 output.extend(_collapse(rs))
         return output
