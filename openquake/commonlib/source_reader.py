@@ -27,6 +27,8 @@ import numpy
 from openquake.baselib import parallel, general
 from openquake.hazardlib import nrml, sourceconverter, calc, InvalidFile
 from openquake.hazardlib.lt import apply_uncertainties
+from openquake.hazardlib.geo.nodalplane import NodalPlane
+from openquake.hazardlib.pmf import PMF
 
 TWO16 = 2 ** 16  # 65,536
 
@@ -88,6 +90,8 @@ def get_csm(oq, full_lt, h5=None):
             sg = copy.copy(grp)
             src_groups.append(sg)
             src = sg[0].new(sm_rlz.ordinal, sm_rlz.value)  # one source
+            if spinning_off:  # use 1 nodal plane instead of 8
+                src.npd = PMF([(1, NodalPlane(0.0, 90.0, 0.0))])
             src.checksum = src.grp_id = src.id = grp_id
             src.samples = sm_rlz.samples
             if classical:
