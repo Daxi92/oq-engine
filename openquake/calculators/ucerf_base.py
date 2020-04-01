@@ -104,10 +104,9 @@ class UcerfFilter(SourceFilter):
             if hasattr(src, 'start'):  # fault sources
                 src.src_filter = self  # hack: needed for .iter_ruptures
                 ridx = set()
-                for idx in range(src.start, src.stop):
-                    ridx.update(src.ridx[idx])
-                mag = src.mags[src.start:src.stop].max()
-                src.indices = self.get_indices(src, ridx, mag)
+                for idx in src.ridx:
+                    ridx.update(idx)
+                src.indices = self.get_indices(src, ridx, src.mags.max())
                 if len(src.indices):
                     yield src
             else:  # background sources
@@ -198,15 +197,6 @@ class UCERFSource(BaseSeismicSource):
         pass
 
     @property
-    def mags(self):
-        # read from FM0_0/MEANFS/MEANMSR/Magnitude
-        if hasattr(self.orig, '_mags'):
-            return self.orig._mags
-        with h5py.File(self.source_file, "r") as hdf5:
-            self.orig._mags = hdf5[self.idx_set["mag"]][()]
-            return self.orig._mags
-
-    @property
     def rate(self):
         # read from FM0_0/MEANFS/MEANMSR/Rates/MeanRates
         if hasattr(self.orig, '_rate'):
@@ -249,6 +239,7 @@ class UCERFSource(BaseSeismicSource):
             new.start = 0
             new.stop = len(hdf5[new.idx_set["mag"]])
             new.ridx = hdf5[new.idx_set["geol"] + "/RuptureIndex"][()]
+            new.mags = hdf5[new.idx_set["mag"]][()]
         return new
 
     def get_min_max_mag(self):
@@ -329,8 +320,8 @@ class UCERFSource(BaseSeismicSource):
             Location of the rupture plane in the hdf5 file
         """
         trt = self.tectonic_region_type
-        ridx = self.ridx[iloc]
-        mag = self.orig.mags[iloc]
+        ridx = self.ridx[iloc - self.start]
+        mag = self.mags[iloc - self.start]
         surface_set = []
         indices = self.src_filter.get_indices(self, ridx, mag)
         if len(indices) == 0:
@@ -378,15 +369,16 @@ class UCERFSource(BaseSeismicSource):
             yield self
             return
         assert self.orig, '%s is not fully initialized' % self
-        start = self.start
-        stop = self.stop
-        while stop > start:
+        for start in range(self.start, self.stop, RUPTURES_PER_BLOCK):
+            stop = min(start + RUPTURES_PER_BLOCK, self.stop)
             new = copy.copy(self)
             new.id = self.id
             new.source_id = '%s:%d-%d' % (self.source_id, start, stop)
             new.orig = self.orig
             new.start = start
-            new.stop = stop = min(start + RUPTURES_PER_BLOCK, stop)
+            new.stop = stop
+            new.ridx = self.ridx[start: stop]
+            new.mags = self.mags[start: stop]
             start += RUPTURES_PER_BLOCK
             yield new
 
