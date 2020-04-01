@@ -105,7 +105,7 @@ class UcerfFilter(SourceFilter):
                 src.src_filter = self  # hack: needed for .iter_ruptures
                 ridx = set()
                 for idx in range(src.start, src.stop):
-                    ridx.update(src.get_ridx(idx))
+                    ridx.update(src.ridx[idx])
                 mag = src.mags[src.start:src.stop].max()
                 src.indices = self.get_indices(src, ridx, mag)
                 if len(src.indices):
@@ -248,6 +248,7 @@ class UCERFSource(BaseSeismicSource):
         with h5py.File(self.source_file, "r") as hdf5:
             new.start = 0
             new.stop = len(hdf5[new.idx_set["mag"]])
+            new.ridx = hdf5[new.idx_set["geol"] + "/RuptureIndex"][()]
         return new
 
     def get_min_max_mag(self):
@@ -261,11 +262,6 @@ class UCERFSource(BaseSeismicSource):
         Returns the temporal occurence model as a Poisson TOM
         """
         return PoissonTOM(self.inv_time)
-
-    def get_ridx(self, iloc):
-        """List of rupture indices for the given iloc"""
-        with h5py.File(self.source_file, "r") as hdf5:
-            return hdf5[self.idx_set["geol"] + "/RuptureIndex"][iloc]
 
     def get_centroids(self, ridx):
         """
@@ -333,7 +329,7 @@ class UCERFSource(BaseSeismicSource):
             Location of the rupture plane in the hdf5 file
         """
         trt = self.tectonic_region_type
-        ridx = self.get_ridx(iloc)
+        ridx = self.ridx[iloc]
         mag = self.orig.mags[iloc]
         surface_set = []
         indices = self.src_filter.get_indices(self, ridx, mag)
