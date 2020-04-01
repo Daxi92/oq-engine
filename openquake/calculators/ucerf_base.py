@@ -31,11 +31,9 @@ from openquake.hazardlib.source.base import BaseSeismicSource
 from openquake.hazardlib.geo.geodetic import min_geodetic_distance
 from openquake.hazardlib.geo.surface.planar import PlanarSurface
 from openquake.hazardlib.geo.surface.multi import MultiSurface
-from openquake.hazardlib.geo.nodalplane import NodalPlane
 from openquake.hazardlib.geo.utils import KM_TO_DEGREES, angular_distance
 from openquake.hazardlib.source.point import PointSource
 from openquake.hazardlib.mfd import EvenlyDiscretizedMFD
-from openquake.hazardlib.pmf import PMF
 from openquake.hazardlib.tom import PoissonTOM
 from openquake.hazardlib.scalerel.wc1994 import WC1994
 from openquake.hazardlib.source.rupture import ParametricProbabilisticRupture
@@ -45,19 +43,6 @@ from openquake.hazardlib.sourceconverter import SourceConverter
 
 DEFAULT_TRT = "Active Shallow Crust"
 RUPTURES_PER_BLOCK = 10000  # decided by MS
-HDD = PMF([(0.2, 3.0), (0.6, 6.0), (0.2, 9.0)])
-NPD = PMF([(0.15, NodalPlane(0.0, 90.0, 0.0)),
-           (0.15, NodalPlane(45.0, 90.0, 0.0)),
-           (0.15, NodalPlane(90.0, 90.0, 0.0)),
-           (0.15, NodalPlane(135.0, 90.0, 0.0)),
-           (0.05, NodalPlane(0.0, 45.0, 90.)),
-           (0.05, NodalPlane(45.0, 45.0, 90.)),
-           (0.05, NodalPlane(90.0, 45.0, 90.)),
-           (0.05, NodalPlane(135.0, 45.0, 90.)),
-           (0.05, NodalPlane(180.0, 45.0, 90.)),
-           (0.05, NodalPlane(225.0, 45.0, 90.)),
-           (0.05, NodalPlane(270.0, 45.0, 90.)),
-           (0.05, NodalPlane(325.0, 45.0, 90.))])
 
 
 def convert_UCERFSource(self, node):
@@ -182,7 +167,7 @@ class UCERFSource(BaseSeismicSource):
 
     def __init__(
             self, source_file, investigation_time, start_date, min_mag,
-            npd=NPD, hdd=HDD, aspect=1.5, upper_seismogenic_depth=0.0,
+            npd, hdd, aspect=1.5, upper_seismogenic_depth=0.0,
             lower_seismogenic_depth=15.0, msr=WC1994(), mesh_spacing=1.0,
             trt="Active Shallow Crust", integration_distance=1000):
         assert os.path.exists(source_file), source_file
