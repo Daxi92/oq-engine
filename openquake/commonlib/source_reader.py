@@ -94,8 +94,7 @@ def get_csm(oq, full_lt, h5=None):
                 # split the sources upfront to improve the task distribution
                 sg.sources = src.get_background_sources(sample)
                 if not sample:
-                    for s in src:
-                        sg.sources.append(s)
+                    sg.sources.extend(src)
             else:  # event_based, use one source
                 sg.sources = [src]
         return CompositeSourceModel(full_lt, src_groups)

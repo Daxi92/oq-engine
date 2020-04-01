@@ -372,24 +372,26 @@ class UCERFSource(BaseSeismicSource):
                 if rup:
                     yield rup
 
+    # called upfront, before classical_split_filter
     def __iter__(self):
+        if self.stop - self.start <= RUPTURES_PER_BLOCK:  # already split
+            yield self
+            return
         assert self.orig, '%s is not fully initialized' % self
         start = self.start
         stop = self.stop
         while stop > start:
             new = copy.copy(self)
             new.id = self.id
-            new.source_id = '%s:%d-%d' % (
-                self.source_id, self.start, self.stop)
+            new.source_id = '%s:%d-%d' % (self.source_id, start, stop)
             new.orig = self.orig
             new.start = start
-            new.stop = min(start + RUPTURES_PER_BLOCK, stop)
+            new.stop = stop = min(start + RUPTURES_PER_BLOCK, stop)
             start += RUPTURES_PER_BLOCK
             yield new
 
     def __repr__(self):
-        return '<%s %s:%d:%d>' % (self.__class__.__name__, self.source_id,
-                                  self.start, self.stop)
+        return '<%s %s>' % (self.__class__.__name__, self.source_id)
 
     def get_background_sources(self, sample_factor=None):
         """
