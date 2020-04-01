@@ -42,7 +42,6 @@ from openquake.hazardlib import valid
 from openquake.hazardlib.sourceconverter import SourceConverter
 
 DEFAULT_TRT = "Active Shallow Crust"
-RUPTURES_PER_BLOCK = 10000  # decided by MS
 
 
 def convert_UCERFSource(self, node):
@@ -161,6 +160,7 @@ class UCERFSource(BaseSeismicSource):
     code = b'U'
     MODIFICATIONS = set()
     tectonic_region_type = DEFAULT_TRT
+    ruptures_per_block = None  # overridden by the source_reader
     checksum = 0
     _wkt = ''
 
@@ -371,20 +371,17 @@ class UCERFSource(BaseSeismicSource):
 
     # called upfront, before classical_split_filter
     def __iter__(self):
-        if self.stop - self.start <= RUPTURES_PER_BLOCK:  # already split
+        if self.stop - self.start <= self.ruptures_per_block:  # already split
             yield self
             return
-        assert self.orig, '%s is not fully initialized' % self
-        for start in range(self.start, self.stop, RUPTURES_PER_BLOCK):
-            stop = min(start + RUPTURES_PER_BLOCK, self.stop)
+        for start in range(self.start, self.stop, self.ruptures_per_block):
+            stop = min(start + self.ruptures_per_block, self.stop)
             new = copy.copy(self)
             new.id = self.id
             new.source_id = '%s:%d-%d' % (self.source_id, start, stop)
-            new.orig = self.orig
             new.start = start
             new.stop = stop
             new.mags = self.mags[start: stop]
-            start += RUPTURES_PER_BLOCK
             yield new
 
     def __repr__(self):
